@@ -1,0 +1,71 @@
+module RFQ where
+
+import AtomicSettlement
+
+template RFQBroadcast
+  with
+    matcher : Party
+    asset : Text
+    side : Text
+    quantity : Decimal
+    price : Decimal
+    expiry : Time
+    status : Text
+    marketMakers : [Party]
+    originalIntentTrader : Party
+  where
+    signatory matcher
+    observer marketMakers
+
+    choice SubmitQuote : ContractId MarketMakerQuote
+      with
+        marketMaker : Party
+        quotePrice : Decimal
+      controller marketMaker
+      do
+        assertMsg "Submitter must be an observer market maker" (elem marketMaker marketMakers)
+        create MarketMakerQuote with
+          matcher = matcher
+          rfqId = self
+          marketMaker = marketMaker
+          trader = originalIntentTrader
+          asset = asset
+          side = side
+          quantity = quantity
+          price = quotePrice
+          status = "OPEN"
+
+template MarketMakerQuote
+  with
+    matcher : Party
+    rfqId : ContractId RFQBroadcast
+    marketMaker : Party
+    trader : Party
+    asset : Text
+    side : Text       -- original trader's side: "BUY" or "SELL"
+    quantity : Decimal
+    price : Decimal    -- quoted price
+    status : Text
+  where
+    signatory marketMaker
+    observer trader, matcher
+
+    choice AcceptQuote : ContractId AtomicSettlement
+      with
+        regulator : Party
+      controller trader
+      do
+        -- Determine who is buyer and who is seller
+        let
+          isTraderBuy = (side == "BUY")
+          buyerParty = if isTraderBuy then trader else marketMaker
+          sellerParty = if isTraderBuy then marketMaker else trader
+
+        create AtomicSettlement with
+          matcher = matcher
+          buyer = buyerParty
+          seller = sellerParty
+          asset = asset
+          quantity = quantity
+          price = price
+          regulator = regulator

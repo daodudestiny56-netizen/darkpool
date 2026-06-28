@@ -1,0 +1,18 @@
+module Daml.Finance.Interface.Holding.Base where
+
+template Holding
+  with
+    owner : Party
+    custodian : Party
+    instrument : Text
+    amount : Decimal
+  where
+    signatory owner
+    observer custodian
+
+    choice Transfer : ContractId Holding
+      with
+        newOwner : Party
+      controller owner, newOwner
+      do
+        create this with owner = newOwner

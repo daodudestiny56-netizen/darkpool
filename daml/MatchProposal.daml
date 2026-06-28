@@ -1,0 +1,56 @@
+module MatchProposal where
+
+import TradeIntent
+import AtomicSettlement
+
+template MatchProposal
+  with
+    matcher : Party
+    buyer : Party
+    seller : Party
+    asset : Text
+    quantity : Decimal
+    price : Decimal
+    buyerIntentId : ContractId TradeIntent
+    sellerIntentId : ContractId TradeIntent
+  where
+    signatory matcher
+    observer buyer, seller
+
+    choice AcceptByBuyer : ContractId BuyerAcceptedMatch
+      controller buyer
+      do
+        -- Update the buyer's intent status to MATCHED
+        exercise buyerIntentId UpdateStatus with newStatus = "MATCHED"
+        create BuyerAcceptedMatch with ..
+
+    choice RejectMatch : ()
+      with
+        rejecter : Party
+      controller rejecter
+      do
+        assertMsg "Only buyer or seller can reject" (rejecter == buyer || rejecter == seller)
+        return ()
+
+template BuyerAcceptedMatch
+  with
+    matcher : Party
+    buyer : Party
+    seller : Party
+    asset : Text
+    quantity : Decimal
+    price : Decimal
+    buyerIntentId : ContractId TradeIntent
+    sellerIntentId : ContractId TradeIntent
+  where
+    signatory matcher, buyer
+    observer seller
+
+    choice AcceptBySeller : ContractId AtomicSettlement
+      with
+        regulator : Party
+      controller seller
+      do
+        -- Update the seller's intent status to MATCHED
+        exercise sellerIntentId UpdateStatus with newStatus = "MATCHED"
+        create AtomicSettlement with ..

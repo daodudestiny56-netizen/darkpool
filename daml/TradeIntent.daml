@@ -1,0 +1,27 @@
+module TradeIntent where
+
+template TradeIntent
+  with
+    trader : Party
+    matcher : Party
+    asset : Text
+    side : Text       -- "BUY" or "SELL"
+    quantity : Decimal
+    price : Decimal
+    expiry : Time
+    status : Text     -- "ACTIVE", "MATCHED", "RFQ", "EXPIRED"
+  where
+    signatory trader
+    observer matcher
+
+    choice CancelIntent : ()
+      controller trader
+      do
+        return ()
+
+    choice UpdateStatus : ContractId TradeIntent
+      with
+        newStatus : Text
+      controller matcher
+      do
+        create this with status = newStatus

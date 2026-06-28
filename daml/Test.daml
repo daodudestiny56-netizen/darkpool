@@ -1,0 +1,187 @@
+module Test where
+
+import Daml.Script
+import Daml.Finance.Interface.Holding.Base
+import TradeIntent
+import MatchProposal
+import AtomicSettlement
+import RFQ
+import AuditRecord
+import DA.Date
+import DA.Time
+
+testDarkPool : Script ()
+testDarkPool = script do
+  -- Allocate parties
+  alice <- allocatePartyWithHint "Alice" (PartyIdHint "Alice")
+  bob <- allocatePartyWithHint "Bob" (PartyIdHint "Bob")
+  carol <- allocatePartyWithHint "Carol" (PartyIdHint "Carol") -- Regulator
+  matcher <- allocatePartyWithHint "MatchEngine" (PartyIdHint "MatchEngine")
+  mm <- allocatePartyWithHint "MarketMaker" (PartyIdHint "MarketMaker")
+  custodian <- allocatePartyWithHint "Custodian" (PartyIdHint "Custodian")
+
+  -- 1. Create Initial Holdings (only owner signature needed now)
+  -- Alice has USD 100,000
+  aliceCashId <- submit alice do
+    createCmd Holding with
+      owner = alice
+      custodian = custodian
+      instrument = "USD"
+      amount = 100000.0
+
+  -- Bob has 2.0 BTC
+  bobAssetId <- submit bob do
+    createCmd Holding with
+      owner = bob
+      custodian = custodian
+      instrument = "BTC"
+      amount = 2.0
+
+  -- 2. Alice submits BUY Intent for 2.0 BTC at $50,000 USD
+  aliceIntentId <- submit alice do
+    createCmd TradeIntent with
+      trader = alice
+      matcher = matcher
+      asset = "BTC"
+      side = "BUY"
+      quantity = 2.0
+      price = 50000.0
+      expiry = time (date 2026 Jun 30) 0 0 0
+      status = "ACTIVE"
+
+  -- 3. Bob submits SELL Intent for 2.0 BTC at $50,000 USD
+  bobIntentId <- submit bob do
+    createCmd TradeIntent with
+      trader = bob
+      matcher = matcher
+      asset = "BTC"
+      side = "SELL"
+      quantity = 2.0
+      price = 50000.0
+      expiry = time (date 2026 Jun 30) 0 0 0
+      status = "ACTIVE"
+
+  -- 4. Matcher detects overlap and creates MatchProposal
+  proposalId <- submit matcher do
+    createCmd MatchProposal with
+      matcher = matcher
+      buyer = alice
+      seller = bob
+      asset = "BTC"
+      quantity = 2.0
+      price = 50000.0
+      buyerIntentId = aliceIntentId
+      sellerIntentId = bobIntentId
+
+  -- 5. Alice (Buyer) accepts match proposal -> returns BuyerAcceptedMatch
+  buyerAcceptedId <- submit alice do
+    exerciseCmd proposalId AcceptByBuyer
+
+  -- 6. Bob (Seller) accepts match proposal -> returns AtomicSettlement
+  settlementId <- submit bob do
+    exerciseCmd buyerAcceptedId AcceptBySeller with regulator = carol
+
+  -- 7. Alice and Bob cooperatively execute Settle choice on AtomicSettlement -> swaps holdings
+  (newAssetId, newCashId, auditId) <- submitMulti [alice, bob] [] do
+    exerciseCmd settlementId Settle with
+      buyerHoldingId = aliceCashId
+      sellerHoldingId = bobAssetId
+
+  -- Assert that Alice now owns the 2.0 BTC
+  Some aliceAsset <- queryContractId alice newAssetId
+  assert (aliceAsset.owner == alice)
+  assert (aliceAsset.instrument == "BTC")
+  assert (aliceAsset.amount == 2.0)
+
+  -- Assert that Bob now owns the 100,000 USD
+  Some bobCash <- queryContractId bob newCashId
+  assert (bobCash.owner == bob)
+  assert (bobCash.instrument == "USD")
+  assert (bobCash.amount == 100000.0)
+
+  -- Regulator checks the AuditRecord
+  Some auditRecord <- queryContractId carol auditId
+  assert (auditRecord.buyer == alice)
+  assert (auditRecord.seller == bob)
+  assert (auditRecord.asset == "BTC")
+  assert (auditRecord.quantity == 2.0)
+  assert (auditRecord.price == 50000.0)
+
+  return ()
+
+testRFQ : Script ()
+testRFQ = script do
+  -- Allocate parties
+  alice <- allocatePartyWithHint "Alice" (PartyIdHint "Alice")
+  carol <- allocatePartyWithHint "Carol" (PartyIdHint "Carol") -- Regulator
+  matcher <- allocatePartyWithHint "MatchEngine" (PartyIdHint "MatchEngine")
+  mm <- allocatePartyWithHint "MarketMaker" (PartyIdHint "MarketMaker")
+  custodian <- allocatePartyWithHint "Custodian" (PartyIdHint "Custodian")
+
+  -- Alice has USD 99,000 (exactly matching the trade value of 2.0 BTC * 49,500 USD)
+  aliceCashId <- submit alice do
+    createCmd Holding with
+      owner = alice
+      custodian = custodian
+      instrument = "USD"
+      amount = 99000.0
+
+  -- Market Maker has 2.0 BTC
+  mmAssetId <- submit mm do
+    createCmd Holding with
+      owner = mm
+      custodian = custodian
+      instrument = "BTC"
+      amount = 2.0
+
+  -- Alice submits BUY Intent which expires
+  aliceIntentId <- submit alice do
+    createCmd TradeIntent with
+      trader = alice
+      matcher = matcher
+      asset = "BTC"
+      side = "BUY"
+      quantity = 2.0
+      price = 50000.0
+      expiry = time (date 2026 Jun 30) 0 0 0
+      status = "ACTIVE"
+
+  -- Matcher graduates intent to RFQBroadcast
+  rfqId <- submit matcher do
+    createCmd RFQBroadcast with
+      matcher = matcher
+      asset = "BTC"
+      side = "BUY"
+      quantity = 2.0
+      price = 50000.0
+      expiry = time (date 2026 Jun 30) 0 0 0
+      status = "OPEN"
+      marketMakers = [mm]
+      originalIntentTrader = alice
+
+  -- Market Maker submits quote
+  quoteId <- submit mm do
+    exerciseCmd rfqId SubmitQuote with
+      marketMaker = mm
+      quotePrice = 49500.0
+
+  -- Alice accepts quote -> returns AtomicSettlement
+  settlementId <- submit alice do
+    exerciseCmd quoteId AcceptQuote with regulator = carol
+
+  -- Settle
+  (newAssetId, newCashId, auditId) <- submitMulti [alice, mm] [] do
+    exerciseCmd settlementId Settle with
+      buyerHoldingId = aliceCashId
+      sellerHoldingId = mmAssetId
+
+  -- Verify ownership has swapped
+  Some aliceAsset <- queryContractId alice newAssetId
+  assert (aliceAsset.owner == alice)
+  assert (aliceAsset.amount == 2.0)
+
+  Some mmCash <- queryContractId mm newCashId
+  assert (mmCash.owner == mm)
+  assert (mmCash.amount == 99000.0) -- 49500.0 * 2.0
+
+  return ()

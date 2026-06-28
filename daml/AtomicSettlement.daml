@@ -1,0 +1,53 @@
+module AtomicSettlement where
+
+import Daml.Finance.Interface.Holding.Base
+import AuditRecord
+
+template AtomicSettlement
+  with
+    matcher : Party
+    buyer : Party
+    seller : Party
+    asset : Text
+    quantity : Decimal
+    price : Decimal
+    regulator : Party
+  where
+    signatory buyer, seller
+    observer regulator
+
+    choice Settle : (ContractId Holding, ContractId Holding, ContractId AuditRecord)
+      with
+        buyerHoldingId : ContractId Holding  -- Buyer's cash holding (USD)
+        sellerHoldingId : ContractId Holding -- Seller's asset holding (BTC)
+      controller buyer
+      do
+        -- Fetch the holdings to verify amounts and instruments
+        buyerHolding <- fetch buyerHoldingId
+        sellerHolding <- fetch sellerHoldingId
+
+        -- Assert that buyer holding is USD and amount matches price * quantity
+        assertMsg "Buyer holding custodian mismatch" (buyerHolding.owner == buyer)
+        assertMsg "Buyer holding incorrect instrument" (buyerHolding.instrument == "USD")
+        assertMsg "Buyer holding insufficient funds" (buyerHolding.amount >= price * quantity)
+
+        -- Assert that seller holding is the asset and amount matches quantity
+        assertMsg "Seller holding custodian mismatch" (sellerHolding.owner == seller)
+        assertMsg "Seller holding incorrect instrument" (sellerHolding.instrument == asset)
+        assertMsg "Seller holding insufficient amount" (sellerHolding.amount >= quantity)
+
+        -- Perform the atomic transfers
+        newAssetHolding <- exercise sellerHoldingId Transfer with newOwner = buyer
+        newCashHolding <- exercise buyerHoldingId Transfer with newOwner = seller
+
+        -- Create the audit record for the regulator
+        auditId <- create AuditRecord with
+          regulator = regulator
+          buyer = buyer
+          seller = seller
+          asset = asset
+          quantity = quantity
+          price = price
+          timestamp = "SETTLED" -- Mocked timestamp / status
+
+        return (newAssetHolding, newCashHolding, auditId)

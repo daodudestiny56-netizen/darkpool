@@ -1,0 +1,14 @@
+module AuditRecord where
+
+template AuditRecord
+  with
+    regulator : Party
+    buyer : Party
+    seller : Party
+    asset : Text
+    quantity : Decimal
+    price : Decimal
+    timestamp : Text
+  where
+    signatory buyer, seller
+    observer regulator
