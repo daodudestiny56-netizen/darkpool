@@ -23,7 +23,7 @@ const TraderDashboard = () => {
   const navigate = useNavigate();
   const { address, partyId, jwt, disconnect } = useWalletStore();
   const {
-    role, intents, proposals, buyerAccepted, settlements, holdings,
+    role, intents, proposals, buyerAccepted, settlements, holdings, auditRecords,
     fetchData, postIntent, acceptProposal, executeSettlement, mintHolding,
   } = useTradingStore();
 
@@ -455,21 +455,28 @@ const TraderDashboard = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {settlements.length === 0 && intents.length === 0 ? (
+                  {auditRecords.length === 0 ? (
                     <tr>
                       <td colSpan="6" className="py-6 text-center font-serif italic text-dp-dim">
                         No settled trades. Execute atomic swaps to populate the log.
                       </td>
                     </tr>
                   ) : (
-                    <tr>
-                      <td className="font-sans font-semibold">USTB</td>
-                      <td className="font-sans" style={{ color: '#C0392B' }}>SOLD</td>
-                      <td className="font-data">100,000 USD</td>
-                      <td className="font-data">$99.12</td>
-                      <td className="font-sans text-dp-muted">1 hour ago</td>
-                      <td className="font-sans font-semibold" style={{ color: '#1A7F4B' }}>● Settled</td>
-                    </tr>
+                    auditRecords.map((r, idx) => {
+                      const isBuyer = r.payload.buyer.includes(getTraderName());
+                      const action = isBuyer ? 'BOUGHT' : 'SOLD';
+                      const actionColor = isBuyer ? '#1A7F4B' : '#C0392B';
+                      return (
+                        <tr key={idx}>
+                          <td className="font-sans font-semibold">{r.payload.asset}</td>
+                          <td className="font-sans" style={{ color: actionColor }}>{action}</td>
+                          <td className="font-data">{parseFloat(r.payload.quantity).toLocaleString()}</td>
+                          <td className="font-data">${parseFloat(r.payload.price).toLocaleString()}</td>
+                          <td className="font-sans text-dp-muted">{r.payload.timestamp || 'Recently'}</td>
+                          <td className="font-sans font-semibold" style={{ color: '#1A7F4B' }}>● Settled</td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>

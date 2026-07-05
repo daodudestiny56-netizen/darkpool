@@ -41,6 +41,7 @@ template AtomicSettlement
         newCashHolding <- exercise buyerHoldingId Transfer with newOwner = seller
 
         -- Create the audit record for the regulator
+        now <- getTime
         auditId <- create AuditRecord with
           regulator = regulator
           buyer = buyer
@@ -48,6 +49,6 @@ template AtomicSettlement
           asset = asset
           quantity = quantity
           price = price
-          timestamp = "SETTLED" -- Mocked timestamp / status
+          timestamp = show now
 
         return (newAssetHolding, newCashHolding, auditId)

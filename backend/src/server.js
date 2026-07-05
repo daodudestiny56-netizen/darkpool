@@ -248,14 +248,10 @@ app.get('/api/settlements', async (req, res) => {
   }
 });
 
-// Get AuditRecords (Carol the Auditor only)
+// Get AuditRecords (Carol the Auditor and Traders)
 app.get('/api/audit-records', async (req, res) => {
   const { party } = req.query;
   const partyId = partyMap[party] || party;
-  
-  if (partyId !== partyMap.Carol) {
-    return res.status(403).json({ error: 'Only the regulator (Carol) can query AuditRecords.' });
-  }
   
   try {
     const records = await queryContracts(partyId, 'AuditRecord:AuditRecord');
