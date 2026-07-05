@@ -52,14 +52,12 @@ export const useTradingStore = create((set, get) => ({
       });
       const rfqData = rfqRes.ok ? await rfqRes.json() : { rfqs: [], quotes: [] };
 
-      // 6. Fetch Audit Records (Carol / Auditor only)
+      // 6. Fetch Audit Records (Available to all parties)
       let auditRecords = [];
-      if (partyName === 'Carol' || partyName.includes('party-81b0') || partyName.includes('Carol')) {
-        const auditRes = await fetch(`${API_URL}/api/audit-records?party=${partyName}`, {
-          headers: { 'Authorization': `Bearer ${jwt}` }
-        });
-        auditRecords = auditRes.ok ? await auditRes.json() : [];
-      }
+      const auditRes = await fetch(`${API_URL}/api/audit-records?party=${partyName}`, {
+        headers: { 'Authorization': `Bearer ${jwt}` }
+      });
+      auditRecords = auditRes.ok ? await auditRes.json() : [];
 
       set({
         holdings,
