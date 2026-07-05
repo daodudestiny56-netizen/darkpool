@@ -152,7 +152,7 @@ const AuditorDashboard = () => {
 
       <main className="flex-1 overflow-y-auto p-6 flex flex-col gap-6 max-w-7xl mx-auto w-full">
         {/* Title row */}
-        <div className="flex justify-between items-center border-b border-dp-border pb-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-dp-border pb-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-dp-indigo/10 flex items-center justify-center">
               <Shield size={20} className="text-dp-indigo" />
@@ -190,9 +190,9 @@ const AuditorDashboard = () => {
           ))}
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left: table + chart */}
-          <div className="xl:col-span-2 flex flex-col gap-6">
+          <div className="lg:col-span-2 flex flex-col gap-6">
             {/* Audit trail table */}
             <div className="bg-white border border-dp-border rounded-2xl p-5 shadow-card">
               <span className="font-display font-semibold text-lg text-dp-text border-b border-dp-border pb-3 block mb-4">
@@ -253,7 +253,7 @@ const AuditorDashboard = () => {
           </div>
 
           {/* Privacy Proof */}
-          <div className="xl:col-span-1">
+          <div className="lg:col-span-1">
             <PrivacyProofWidget jwt={jwt} />
           </div>
         </div>

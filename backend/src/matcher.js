@@ -1,9 +1,6 @@
 import { queryContracts, createContract } from './ledger.js';
 import { partyMap } from './parties.js';
 
-// Local cache to avoid proposing duplicate matches for the same intents
-const proposedIntents = new Set();
-
 export async function runMatcher() {
   const matcherParty = partyMap.MatchEngine;
   if (!matcherParty) return;
@@ -13,10 +10,18 @@ export async function runMatcher() {
     const intents = await queryContracts(matcherParty, 'TradeIntent:TradeIntent');
     if (!intents || intents.length === 0) return;
     
+    // Fetch active MatchProposals to prevent duplicating matches for the same intent
+    const proposals = await queryContracts(matcherParty, 'MatchProposal:MatchProposal');
+    const proposedIntentIds = new Set();
+    proposals.forEach(p => {
+      proposedIntentIds.add(p.payload.buyerIntentId);
+      proposedIntentIds.add(p.payload.sellerIntentId);
+    });
+    
     // Filter active intents and exclude already matched/proposed ones
     const activeIntents = intents.filter(c => 
       c.payload.status === 'ACTIVE' && 
-      !proposedIntents.has(c.contractId)
+      !proposedIntentIds.has(c.contractId)
     );
     
     // Group active intents by asset
@@ -37,8 +42,8 @@ export async function runMatcher() {
       
       for (const buy of buys) {
         for (const sell of sells) {
-          // Check if already matched
-          if (proposedIntents.has(buy.contractId) || proposedIntents.has(sell.contractId)) {
+          // Check if already matched in this cycle
+          if (proposedIntentIds.has(buy.contractId) || proposedIntentIds.has(sell.contractId)) {
             continue;
           }
           
@@ -47,34 +52,55 @@ export async function runMatcher() {
           const buyQty = parseFloat(buy.payload.quantity);
           const sellQty = parseFloat(sell.payload.quantity);
           
-          // Match criteria: price overlap and exact quantity match for simple OTC pool
-          if (buyPrice >= sellPrice && buyQty === sellQty) {
-            console.log(`[Matcher] Match found for ${asset}: Buy limit $${buyPrice}, Sell limit $${sellPrice}, Qty ${buyQty}`);
-            
-            // Propose match at the midpoint price
+          // Match criteria: price overlap (Partial Matching allowed!)
+          if (buyPrice >= sellPrice) {
+            const matchedQty = Math.min(buyQty, sellQty);
             const matchPrice = (buyPrice + sellPrice) / 2;
             
-            proposedIntents.add(buy.contractId);
-            proposedIntents.add(sell.contractId);
+            console.log(`[Matcher] Partial Match found for ${asset}: Buy limit $${buyPrice}, Sell limit $${sellPrice}, Matched Qty ${matchedQty}`);
+            
+            proposedIntentIds.add(buy.contractId);
+            proposedIntentIds.add(sell.contractId);
             
             try {
+              let finalBuyIntentId = buy.contractId;
+              let finalSellIntentId = sell.contractId;
+              
+              const { exerciseChoice } = await import('./ledger.js');
+
+              // Split Buy Intent if necessary
+              if (buyQty > matchedQty) {
+                const splitResult = await exerciseChoice(matcherParty, 'TradeIntent:TradeIntent', buy.contractId, 'SplitIntent', {
+                  splitQuantity: matchedQty.toString()
+                });
+                finalBuyIntentId = splitResult.exerciseResult[0];
+              }
+
+              // Split Sell Intent if necessary
+              if (sellQty > matchedQty) {
+                const splitResult = await exerciseChoice(matcherParty, 'TradeIntent:TradeIntent', sell.contractId, 'SplitIntent', {
+                  splitQuantity: matchedQty.toString()
+                });
+                finalSellIntentId = splitResult.exerciseResult[0];
+              }
+
               const proposal = await createContract(matcherParty, 'MatchProposal:MatchProposal', {
                 matcher: matcherParty,
                 buyer: buy.payload.trader,
                 seller: sell.payload.trader,
                 asset: asset,
-                quantity: buyQty.toString(),
+                quantity: matchedQty.toString(),
                 price: matchPrice.toString(),
-                buyerIntentId: buy.contractId,
-                sellerIntentId: sell.contractId
+                buyerIntentId: finalBuyIntentId,
+                sellerIntentId: finalSellIntentId
               });
               
               console.log('[Matcher] Successfully created MatchProposal:', proposal.contractId);
             } catch (err) {
-              console.error('[Matcher] Failed to create MatchProposal:', err.message);
+              console.error('[Matcher] Failed to process partial match:', err.message);
               // Rollback cache
-              proposedIntents.delete(buy.contractId);
-              proposedIntents.delete(sell.contractId);
+              proposedIntentIds.delete(buy.contractId);
+              proposedIntentIds.delete(sell.contractId);
             }
           }
         }
