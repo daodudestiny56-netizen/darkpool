@@ -10,6 +10,12 @@ import { checkExpiries } from './expiry-monitor.js';
 
 dotenv.config();
 
+if (!process.env.CANTON_URL) {
+  console.error('[FATAL] CANTON_URL environment variable is not set');
+  process.exit(1);
+}
+console.log('[Startup] CANTON_URL:', process.env.CANTON_URL);
+
 const app = express();
 const port = process.env.PORT || 5000;
 
