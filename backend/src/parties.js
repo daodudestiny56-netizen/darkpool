@@ -34,7 +34,7 @@ export function generateToken(partyIdOrList) {
 export async function allocateParty(jsonApiUrl, name) {
   try {
     const token = generateToken(name);
-    const res = await fetch(`${jsonApiUrl}/v1/parties/allocate`, {
+    const res = await fetch(`${jsonApiUrl}/v2/parties/allocate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -63,7 +63,7 @@ export async function allocateParty(jsonApiUrl, name) {
 export async function resolveParties(jsonApiUrl) {
   try {
     const token = generateToken('MatchEngine');
-    const res = await fetch(`${jsonApiUrl}/v1/parties`, {
+    const res = await fetch(`${jsonApiUrl}/v2/parties`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
