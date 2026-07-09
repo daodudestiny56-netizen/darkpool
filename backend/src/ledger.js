@@ -2,7 +2,7 @@ import { generateToken } from './parties.js';
 import { execSync } from 'child_process';
 import path from 'path';
 
-const JSON_API_URL = process.env.CANTON_URL;
+const CANTON_URL = process.env.CANTON_URL;
 const PACKAGE_ID = "76c6acbcb3ebde7e60126dd183c00a89c07ad8e6162f4abbda99e6c0cb17d7f7";
 
 export function getPackageId() {
@@ -18,7 +18,7 @@ export function getFullTemplateId(shortName) {
 // Helper to make API requests
 async function request(party, endpoint, body) {
   const token = generateToken(party);
-  const url = `${JSON_API_URL}${endpoint}`;
+  const url = `${CANTON_URL}${endpoint}`;
   
   try {
     const res = await fetch(url, {
