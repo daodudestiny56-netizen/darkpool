@@ -1,5 +1,13 @@
 # DarkPool.fi
 
+## 🔗 Live Demo
+https://darkpoolfi.vercel.app
+
+## 🏗️ Deployment
+- Frontend: https://darkpoolfi.vercel.app (Vercel)
+- Backend: https://darkpool-production.up.railway.app (Railway)
+- Canton: DevNet — Fivenorth Seaport Validator
+
 DarkPool.fi is a decentralized, institutional-grade Over-The-Counter (OTC) trading platform built on the Canton Network. It leverages Daml smart contracts to execute atomic swaps with absolute sub-ledger privacy.
 
 ## Hackathon Track: Private DeFi & Capital Markets
