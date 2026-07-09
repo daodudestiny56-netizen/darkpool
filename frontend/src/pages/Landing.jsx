@@ -132,7 +132,7 @@ const Landing = () => {
       </section>
 
       {/* ── Status footer ── */}
-      <footer className="border-t border-dp-border/60 px-8 md:px-14 py-4 flex items-center justify-between text-xs font-sans text-dp-dim bg-dp-parchment/60">
+      <footer className="border-t border-dp-border/60 px-8 md:px-14 py-4 flex flex-col md:flex-row items-center justify-between gap-4 text-xs font-sans text-dp-dim bg-dp-parchment/60">
         <div className="flex items-center gap-2">
           <span className="live-dot" />
           <span>All Systems Active</span>

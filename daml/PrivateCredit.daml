@@ -1,0 +1,74 @@
+module PrivateCredit where
+
+import Daml.Finance.Interface.Holding.Base
+
+template LoanRequest
+  with
+    trader : Party
+    marketMaker : Party
+    loanAsset : Text
+    loanAmount : Decimal
+    collateralAsset : Text
+    collateralAmount : Decimal
+    collateralHoldingId : ContractId Holding
+  where
+    signatory trader
+    observer marketMaker
+
+    choice FundLoan : (ContractId ActiveLoan, ContractId Holding)
+      with
+        loanHoldingId : ContractId Holding -- Market maker provides USD holding
+      controller marketMaker
+      do
+        -- Verify loan holding matches request
+        loanHolding <- fetch loanHoldingId
+        assertMsg "Loan holding custodian mismatch" (loanHolding.owner == marketMaker)
+        assertMsg "Loan holding incorrect instrument" (loanHolding.instrument == loanAsset)
+        assertMsg "Loan holding insufficient funds" (loanHolding.amount >= loanAmount)
+        
+        -- Transfer loan holding to trader
+        traderLoanHolding <- exercise loanHoldingId Transfer with newOwner = trader
+        
+        -- SECURE: Transfer collateral from trader to Market Maker to lock it
+        lockedCollateralId <- exercise collateralHoldingId Transfer with newOwner = marketMaker
+        
+        -- Create ActiveLoan
+        activeLoanId <- create ActiveLoan with
+          trader = trader
+          marketMaker = marketMaker
+          loanAsset = loanAsset
+          loanAmount = loanAmount
+          collateralAsset = collateralAsset
+          collateralAmount = collateralAmount
+          lockedCollateralId = lockedCollateralId
+        
+        return (activeLoanId, traderLoanHolding)
+
+template ActiveLoan
+  with
+    trader : Party
+    marketMaker : Party
+    loanAsset : Text
+    loanAmount : Decimal
+    collateralAsset : Text
+    collateralAmount : Decimal
+    lockedCollateralId : ContractId Holding
+  where
+    signatory trader, marketMaker
+
+    choice RepayLoan : ContractId Holding
+      with
+        repaymentHoldingId : ContractId Holding
+      controller trader
+      do
+        -- Verify repayment holding
+        repayment <- fetch repaymentHoldingId
+        assertMsg "Repayment holding owner mismatch" (repayment.owner == trader)
+        assertMsg "Repayment holding incorrect instrument" (repayment.instrument == loanAsset)
+        assertMsg "Repayment holding insufficient amount" (repayment.amount >= loanAmount)
+        
+        -- Transfer repayment to market maker
+        exercise repaymentHoldingId Transfer with newOwner = marketMaker
+        
+        -- SECURE: Transfer locked collateral back to trader
+        exercise lockedCollateralId Transfer with newOwner = trader

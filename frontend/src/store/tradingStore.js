@@ -12,6 +12,9 @@ export const useTradingStore = create((set, get) => ({
   rfqs: [],
   quotes: [],
   auditRecords: [],
+  vaults: [],
+  loanRequests: [],
+  activeLoans: [],
   isLoading: false,
   error: null,
 
@@ -59,6 +62,15 @@ export const useTradingStore = create((set, get) => ({
       });
       auditRecords = auditRes.ok ? await auditRes.json() : [];
 
+      // 7. Fetch Private Credit (Vaults, Requests, Loans)
+      const vaultRes = await fetch(`${API_URL}/api/credit/vaults?party=${partyName}`, { headers: { 'Authorization': `Bearer ${jwt}` } });
+      const reqRes = await fetch(`${API_URL}/api/credit/requests?party=${partyName}`, { headers: { 'Authorization': `Bearer ${jwt}` } });
+      const loanRes = await fetch(`${API_URL}/api/credit/loans?party=${partyName}`, { headers: { 'Authorization': `Bearer ${jwt}` } });
+      
+      const vaults = vaultRes.ok ? await vaultRes.json() : [];
+      const loanRequests = reqRes.ok ? await reqRes.json() : [];
+      const activeLoans = loanRes.ok ? await loanRes.json() : [];
+
       set({
         holdings,
         intents,
@@ -68,6 +80,9 @@ export const useTradingStore = create((set, get) => ({
         rfqs: rfqData.rfqs || [],
         quotes: rfqData.quotes || [],
         auditRecords,
+        vaults,
+        loanRequests,
+        activeLoans,
         isLoading: false
       });
     } catch (err) {
@@ -198,6 +213,51 @@ export const useTradingStore = create((set, get) => ({
       return true;
     } catch (err) {
       console.error('[TradingStore] Accept quote failed:', err.message);
+      throw err;
+    }
+  },
+
+  requestLoan: async (trader, marketMaker, loanAsset, loanAmount, collateralAsset, collateralAmount, collateralHoldingId, jwt) => {
+    try {
+      const res = await fetch(`${API_URL}/api/credit/request-loan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
+        body: JSON.stringify({ trader, marketMaker, loanAsset, loanAmount, collateralAsset, collateralAmount, collateralHoldingId })
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      return true;
+    } catch (err) {
+      console.error('[TradingStore] Request loan failed:', err.message);
+      throw err;
+    }
+  },
+
+  fundLoan: async (marketMaker, requestId, loanHoldingId, jwt) => {
+    try {
+      const res = await fetch(`${API_URL}/api/credit/fund-loan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
+        body: JSON.stringify({ marketMaker, requestId, loanHoldingId })
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      return true;
+    } catch (err) {
+      console.error('[TradingStore] Fund loan failed:', err.message);
+      throw err;
+    }
+  },
+
+  repayLoan: async (trader, loanId, repaymentHoldingId, jwt) => {
+    try {
+      const res = await fetch(`${API_URL}/api/credit/repay-loan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
+        body: JSON.stringify({ trader, loanId, repaymentHoldingId })
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      return true;
+    } catch (err) {
+      console.error('[TradingStore] Repay loan failed:', err.message);
       throw err;
     }
   }

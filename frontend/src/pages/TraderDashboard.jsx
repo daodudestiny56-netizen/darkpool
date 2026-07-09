@@ -31,6 +31,14 @@ const TraderDashboard = () => {
   const [quantity, setQuantity] = useState('2.0');
   const [price, setPrice] = useState('50000.0');
   const [expirySecs, setExpirySecs] = useState('20');
+  
+  // Private Credit State
+  const [activeTab, setActiveTab] = useState('exchange');
+  const [loanAsset, setLoanAsset] = useState('USD');
+  const [loanAmount, setLoanAmount] = useState('10000');
+  const [collateralAsset, setCollateralAsset] = useState('BTC');
+  const [collateralAmount, setCollateralAmount] = useState('0.5');
+
   const [showMatchAlert, setShowMatchAlert] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
@@ -42,15 +50,16 @@ const TraderDashboard = () => {
   };
 
   const getTraderName = () => {
-    if (address?.toLowerCase().includes('alice')) return 'Alice';
-    if (address?.toLowerCase().includes('bob')) return 'Bob';
-    return address;
+    return partyId || address;
   };
 
   const updateData = () => fetchData(getTraderName(), jwt);
 
+  const isInitialFetch = useRef(true);
   useEffect(() => {
-    updateData();
+    updateData().then(() => {
+      isInitialFetch.current = false;
+    });
     ws.current = new WebSocket('ws://localhost:5000');
     ws.current.onmessage = (event) => {
       const msg = JSON.parse(event.data);
@@ -59,17 +68,23 @@ const TraderDashboard = () => {
       if (msg.type === 'PROPOSAL_ACCEPTED_SELLER') showToast('Co-signed by seller. Settlement ready.');
       if (msg.type === 'SETTLEMENT_EXECUTED') showToast('Atomic settlement complete!');
       if (msg.type === 'QUOTE_SUBMITTED') showToast(`Market Maker quoted $${msg.quote?.payload?.price} on RFQ`);
+      if (msg.type === 'LOAN_REQUESTED') showToast(`Loan requested for ${msg.trader}`);
+      if (msg.type === 'LOAN_FUNDED') showToast(`Loan funded by Market Maker`);
+      if (msg.type === 'LOAN_REPAID') showToast(`Loan repaid by trader`);
       updateData();
     };
 
-    const prevCount = proposals.length;
-    const check = setInterval(() => {
-      const s = useTradingStore.getState();
-      if (s.proposals.length > 0 && prevCount === 0) setShowMatchAlert(true);
-    }, 1500);
-
-    return () => { clearInterval(check); ws.current?.close(); };
+    return () => { ws.current?.close(); };
   }, [address]);
+
+  // Alert when new proposals arrive
+  const prevProposalsLength = useRef(proposals.length);
+  useEffect(() => {
+    if (!isInitialFetch.current && proposals.length > prevProposalsLength.current) {
+      setShowMatchAlert(true);
+    }
+    prevProposalsLength.current = proposals.length;
+  }, [proposals.length]);
 
   const handleSubmitIntent = async (e) => {
     e.preventDefault();
@@ -116,6 +131,35 @@ const TraderDashboard = () => {
     } catch (err) { showToast(`Mint failed: ${err.message}`); }
   };
 
+  const { requestLoan, repayLoan, vaults, loanRequests, activeLoans } = useTradingStore();
+
+  const handleRequestLoan = async (e) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      // Find collateral holding
+      const cHolding = holdings.find(h => h.payload.instrument === collateralAsset && parseFloat(h.payload.amount) >= parseFloat(collateralAmount));
+      if (!cHolding) { alert(`You need at least ${collateralAmount} ${collateralAsset} holding to use as collateral. Mint from faucet.`); setIsSubmitting(false); return; }
+      
+      const mmParty = 'MarketMaker';
+      await requestLoan(getTraderName(), mmParty, loanAsset, loanAmount, collateralAsset, collateralAmount, cHolding.contractId, jwt);
+      showToast('Loan Request submitted to Market Makers.');
+      updateData();
+    } catch (err) { showToast(`Loan request failed: ${err.message}`); }
+    finally { setIsSubmitting(false); }
+  };
+
+  const handleRepayLoan = async (loanId, loanAsset, loanAmount) => {
+    try {
+      const repaymentHolding = holdings.find(h => h.payload.instrument === loanAsset && parseFloat(h.payload.amount) >= parseFloat(loanAmount));
+      if (!repaymentHolding) { alert(`You need at least ${loanAmount} ${loanAsset} to repay this loan.`); return; }
+      
+      await repayLoan(getTraderName(), loanId, repaymentHolding.contractId, jwt);
+      showToast('Loan repaid successfully. Collateral unlocked.');
+      updateData();
+    } catch (err) { showToast(`Repayment failed: ${err.message}`); }
+  };
+
   let usdBal = 0, btcBal = 0, ustbBal = 0;
   holdings.forEach(h => {
     if (h.payload.instrument === 'USD')  usdBal  += parseFloat(h.payload.amount);
@@ -139,13 +183,29 @@ const TraderDashboard = () => {
       )}
 
       {/* Navbar */}
-      <header className="flex justify-between items-center px-6 py-3.5 bg-white border-b border-dp-border shadow-sm">
-        <span
-          className="font-display font-bold text-xl text-dp-text cursor-pointer"
-          onClick={() => navigate('/role')}
-        >
-          Dark<span className="text-gold">Pool</span>.fi
-        </span>
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center px-6 py-3.5 bg-white border-b border-dp-border shadow-sm gap-4">
+        <div className="flex flex-col md:flex-row md:items-center gap-4 md:gap-8 w-full md:w-auto">
+          <span
+            className="font-display font-bold text-xl text-dp-text cursor-pointer shrink-0"
+            onClick={() => navigate('/role')}
+          >
+            Dark<span className="text-gold">Pool</span>.fi
+          </span>
+          <nav className="flex gap-2 md:gap-4 overflow-x-auto w-full md:w-auto pb-1 md:pb-0 scrollbar-hide">
+            <button
+              onClick={() => setActiveTab('exchange')}
+              className={`font-display font-semibold text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap ${activeTab === 'exchange' ? 'bg-dp-parchment text-dp-text border border-dp-border' : 'text-dp-muted hover:text-dp-text'}`}
+            >
+              OTC Exchange
+            </button>
+            <button
+              onClick={() => setActiveTab('credit')}
+              className={`font-display font-semibold text-sm px-4 py-2 rounded-lg transition-colors whitespace-nowrap ${activeTab === 'credit' ? 'bg-dp-parchment text-dp-text border border-dp-border' : 'text-dp-muted hover:text-dp-text'}`}
+            >
+              Private Credit
+            </button>
+          </nav>
+        </div>
 
         <div className="flex items-center gap-4">
           <span
@@ -167,9 +227,9 @@ const TraderDashboard = () => {
         </div>
       </header>
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
         {/* Sidebar */}
-        <aside className="w-72 bg-white border-r border-dp-border flex flex-col p-5 gap-5 overflow-y-auto shrink-0">
+        <aside className="w-full md:w-72 bg-white border-b md:border-b-0 md:border-r border-dp-border flex flex-col p-5 gap-5 overflow-y-auto shrink-0">
           {/* Party ID */}
           <div className="bg-dp-parchment border border-dp-border rounded-xl p-3.5">
             <span className="label block mb-1.5">Canton Party ID</span>
@@ -222,7 +282,9 @@ const TraderDashboard = () => {
         {/* Main content */}
         <main className="flex-1 flex flex-col overflow-hidden p-6 gap-6">
           <div className="flex items-center justify-between border-b border-dp-border pb-4">
-            <h2 className="font-display font-bold text-2xl text-dp-text">OTC Dark Trading Desk</h2>
+            <h2 className="font-display font-bold text-2xl text-dp-text">
+              {activeTab === 'exchange' ? 'OTC Dark Trading Desk' : 'Confidential Borrowing'}
+            </h2>
             <button
               onClick={updateData}
               className="flex items-center gap-2 font-sans text-xs text-dp-muted hover:text-dp-indigo border border-dp-border rounded-full px-3 py-1.5 hover:border-dp-indigo/40 transition-all"
@@ -232,9 +294,11 @@ const TraderDashboard = () => {
           </div>
 
           <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-6">
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            {activeTab === 'exchange' ? (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Intent Form */}
-              <div className="xl:col-span-1 bg-white border border-dp-border rounded-2xl p-5 flex flex-col gap-4 shadow-card">
+              <div className="lg:col-span-1 bg-white border border-dp-border rounded-2xl p-5 flex flex-col gap-4 shadow-card">
                 <span className="font-display font-semibold text-lg text-dp-text border-b border-dp-border pb-3 block">
                   Post Intent
                   <span className="ml-2 text-sm font-serif italic text-dp-muted font-normal">(dark)</span>
@@ -254,7 +318,7 @@ const TraderDashboard = () => {
                     </select>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div className="flex flex-col gap-1.5">
                       <label className="label">Quantity</label>
                       <input
@@ -303,7 +367,7 @@ const TraderDashboard = () => {
               </div>
 
               {/* Right: Intents + Inbox */}
-              <div className="xl:col-span-2 flex flex-col gap-6">
+              <div className="lg:col-span-2 flex flex-col gap-6">
                 {/* Active Intents */}
                 <div className="bg-white border border-dp-border rounded-2xl p-5 shadow-card">
                   <span className="font-display font-semibold text-lg text-dp-text border-b border-dp-border pb-3 block mb-4">
@@ -313,7 +377,7 @@ const TraderDashboard = () => {
                     {intents.map((intent, idx) => (
                       <div
                         key={idx}
-                        className="flex justify-between items-center bg-dp-parchment border border-dp-border rounded-xl p-3.5"
+                        className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-dp-parchment border border-dp-border rounded-xl p-3.5"
                       >
                         <div className="flex flex-col gap-1">
                           <div className="flex items-center gap-2">
@@ -356,7 +420,7 @@ const TraderDashboard = () => {
                   </span>
                   <div className="flex flex-col gap-3">
                     {proposals.map((prop, idx) => (
-                      <div key={idx} className="flex justify-between items-center bg-blue-50 border border-blue-100 rounded-xl p-3.5">
+                      <div key={idx} className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-blue-50 border border-blue-100 rounded-xl p-3.5">
                         <div>
                           <div className="flex items-center gap-2 mb-1">
                             <span className="bg-dp-indigo/10 text-dp-indigo font-sans text-xs font-bold px-2 py-0.5 rounded-full">Match Found</span>
@@ -381,7 +445,7 @@ const TraderDashboard = () => {
                     ))}
 
                     {buyerAccepted.map((prop, idx) => (
-                      <div key={idx} className="flex justify-between items-center bg-amber-50 border border-amber-200 rounded-xl p-3.5">
+                      <div key={idx} className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl p-3.5">
                         <div>
                           <div className="flex items-center gap-2 mb-1">
                             <span className="bg-dp-gold/15 text-dp-gold font-sans text-xs font-bold px-2 py-0.5 rounded-full">Buyer Signed</span>
@@ -405,7 +469,7 @@ const TraderDashboard = () => {
                     ))}
 
                     {settlements.map((prop, idx) => (
-                      <div key={idx} className="flex justify-between items-center bg-emerald-50 border border-emerald-200 rounded-xl p-3.5">
+                      <div key={idx} className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-xl p-3.5">
                         <div>
                           <div className="flex items-center gap-2 mb-1">
                             <span className="bg-emerald-100 text-emerald-700 font-sans text-xs font-bold px-2 py-0.5 rounded-full">Ready to Swap</span>
@@ -443,7 +507,8 @@ const TraderDashboard = () => {
               <span className="font-display font-semibold text-lg text-dp-text border-b border-dp-border pb-3 block mb-4">
                 Settled Trade Log
               </span>
-              <table className="dp-table">
+              <div className="overflow-x-auto">
+                <table className="dp-table min-w-max w-full">
                 <thead>
                   <tr>
                     <th>Asset</th>
@@ -480,7 +545,112 @@ const TraderDashboard = () => {
                   )}
                 </tbody>
               </table>
+              </div>
             </div>
+            </>
+            ) : (
+            <>
+              {/* Private Credit Tab Content */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-1 bg-white border border-dp-border rounded-2xl p-5 flex flex-col gap-4 shadow-card">
+                  <span className="font-display font-semibold text-lg text-dp-text border-b border-dp-border pb-3 block">
+                    Lock Collateral & Borrow
+                    <span className="ml-2 text-sm font-serif italic text-dp-muted font-normal">(private)</span>
+                  </span>
+
+                  <form onSubmit={handleRequestLoan} className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="label">Collateral Asset</label>
+                      <select value={collateralAsset} onChange={e => setCollateralAsset(e.target.value)} className="dp-input dp-select">
+                        <option value="BTC">Bitcoin (BTC)</option>
+                        <option value="ETH">Ethereum (ETH)</option>
+                        <option value="USTB">US Treasury Bill (USTB)</option>
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="label">Collateral Amount to Lock</label>
+                      <input type="number" step="0.1" value={collateralAmount} onChange={e => setCollateralAmount(e.target.value)} className="dp-input" required />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 mt-2">
+                      <label className="label">Loan Asset</label>
+                      <select value={loanAsset} onChange={e => setLoanAsset(e.target.value)} className="dp-input dp-select">
+                        <option value="USD">USD Cash</option>
+                        <option value="USDC">USD Coin</option>
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="label">Loan Amount</label>
+                      <input type="number" step="100" value={loanAmount} onChange={e => setLoanAmount(e.target.value)} className="dp-input" required />
+                    </div>
+
+                    <button
+                      type="submit" disabled={isSubmitting}
+                      className="w-full bg-dp-indigo text-white font-display font-semibold text-sm py-3 rounded-xl transition-all shadow-btn hover:bg-dp-indigo/90 mt-2"
+                    >
+                      {isSubmitting ? 'Requesting...' : 'Submit Confidential Loan Request'}
+                    </button>
+                    <p className="text-center text-xs font-sans text-dp-dim leading-relaxed">
+                      🔒 Your collateral and loan terms are completely hidden from the public orderbook.
+                    </p>
+                  </form>
+                </div>
+
+                <div className="lg:col-span-2 flex flex-col gap-6">
+                  {/* Loan Requests */}
+                  <div className="bg-white border border-dp-border rounded-2xl p-5 shadow-card">
+                    <span className="font-display font-semibold text-lg text-dp-text border-b border-dp-border pb-3 block mb-4">
+                      My Pending Loan Requests
+                    </span>
+                    <div className="flex flex-col gap-3">
+                      {loanRequests.map((req, idx) => (
+                        <div key={idx} className="flex justify-between items-center bg-dp-parchment border border-dp-border rounded-xl p-3.5">
+                          <div>
+                            <div className="font-sans font-semibold text-sm text-dp-text">
+                              Request: {req.payload.loanAmount} {req.payload.loanAsset}
+                            </div>
+                            <div className="font-data text-xs text-dp-muted">
+                              Collateral Locked: {req.payload.collateralAmount} {req.payload.collateralAsset}
+                            </div>
+                          </div>
+                          <span className="font-sans text-xs text-dp-gold animate-pulse">Awaiting Funding</span>
+                        </div>
+                      ))}
+                      {loanRequests.length === 0 && <div className="text-center font-serif italic text-dp-dim text-sm py-4">No pending requests.</div>}
+                    </div>
+                  </div>
+
+                  {/* Active Loans */}
+                  <div className="bg-white border border-dp-border rounded-2xl p-5 shadow-card">
+                    <span className="font-display font-semibold text-lg text-dp-text border-b border-dp-border pb-3 block mb-4">
+                      Active Loans (Funded)
+                    </span>
+                    <div className="flex flex-col gap-3">
+                      {activeLoans.map((loan, idx) => (
+                        <div key={idx} className="flex justify-between items-center bg-emerald-50 border border-emerald-200 rounded-xl p-3.5">
+                          <div>
+                            <div className="font-sans font-semibold text-sm text-emerald-800">
+                              Owe: {loan.payload.loanAmount} {loan.payload.loanAsset}
+                            </div>
+                            <div className="font-data text-xs text-emerald-600">
+                              Collateral Locked: {loan.payload.collateralAmount} {loan.payload.collateralAsset}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleRepayLoan(loan.contractId, loan.payload.loanAsset, loan.payload.loanAmount)}
+                            className="bg-emerald-600 text-white font-sans text-xs px-4 py-2 rounded-lg shadow-sm hover:bg-emerald-700 transition"
+                          >
+                            Repay Loan
+                          </button>
+                        </div>
+                      ))}
+                      {activeLoans.length === 0 && <div className="text-center font-serif italic text-dp-dim text-sm py-4">No active loans.</div>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+            )}
           </div>
         </main>
       </div>

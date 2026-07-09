@@ -12,11 +12,19 @@ export async function checkExpiries(broadcastCallback) {
     const intents = await queryContracts(matcherParty, 'TradeIntent:TradeIntent');
     if (!intents || intents.length === 0) return;
     
+    const proposals = await queryContracts(matcherParty, 'MatchProposal:MatchProposal');
+    const buyerAccepted = await queryContracts(matcherParty, 'MatchProposal:BuyerAcceptedMatch');
+    
     const now = new Date();
     
     for (const intent of intents) {
       if (intent.payload.status !== 'ACTIVE') continue;
       if (graduatingIntents.has(intent.contractId)) continue;
+      
+      // Do not expire intents that are currently locked in a MatchProposal or BuyerAcceptedMatch
+      const inProposal = proposals.some(p => p.payload.buyerIntentId === intent.contractId || p.payload.sellerIntentId === intent.contractId);
+      const inAccepted = buyerAccepted.some(p => p.payload.buyerIntentId === intent.contractId || p.payload.sellerIntentId === intent.contractId);
+      if (inProposal || inAccepted) continue;
       
       const expiryTime = new Date(intent.payload.expiry);
       

@@ -25,3 +25,16 @@ template TradeIntent
       controller matcher
       do
         create this with status = newStatus
+
+    choice SplitIntent : (ContractId TradeIntent, ContractId TradeIntent)
+      with
+        splitQuantity : Decimal
+      controller matcher
+      do
+        assertMsg "Split quantity must be less than total quantity" (splitQuantity < quantity)
+        assertMsg "Split quantity must be positive" (splitQuantity > 0.0)
+        
+        part1 <- create this with quantity = splitQuantity
+        part2 <- create this with quantity = quantity - splitQuantity
+        
+        return (part1, part2)
