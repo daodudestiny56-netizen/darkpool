@@ -2,7 +2,7 @@ import { generateToken } from './parties.js';
 import { execSync } from 'child_process';
 import path from 'path';
 
-const JSON_API_URL = process.env.CANTON_URL || 'http://localhost:7575';
+const JSON_API_URL = process.env.CANTON_URL;
 const PACKAGE_ID = "76c6acbcb3ebde7e60126dd183c00a89c07ad8e6162f4abbda99e6c0cb17d7f7";
 
 export function getPackageId() {

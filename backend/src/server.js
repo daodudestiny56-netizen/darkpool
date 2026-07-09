@@ -94,7 +94,7 @@ app.post('/api/auth/wallet', async (req, res) => {
     } else {
       // Check if display name already matches in the allocated parties list
       const tempToken = generateToken('MatchEngine');
-      const partiesRes = await fetch(`${process.env.CANTON_URL || 'http://localhost:7575'}/v2/parties`, {
+      const partiesRes = await fetch(`${process.env.CANTON_URL}/v2/parties`, {
         headers: {
           'Authorization': `Bearer ${tempToken}`
         }
@@ -110,7 +110,7 @@ app.post('/api/auth/wallet', async (req, res) => {
       // If not allocated, allocate dynamically!
       if (!resolvedPartyId) {
         console.log(`[Auth] Allocating new party for address: ${address}`);
-        resolvedPartyId = await allocateParty(process.env.CANTON_URL || 'http://localhost:7575', address);
+        resolvedPartyId = await allocateParty(process.env.CANTON_URL, address);
       }
     }
     
@@ -456,7 +456,7 @@ async function startup() {
   isResolving = true;
   
   console.log('[Startup] Resolving parties from Canton JSON API...');
-  await resolveParties(process.env.CANTON_URL || 'http://localhost:7575');
+  await resolveParties(process.env.CANTON_URL);
   isResolving = false;
 }
 
