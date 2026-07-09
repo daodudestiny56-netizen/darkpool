@@ -2,39 +2,11 @@ import { generateToken } from './parties.js';
 import { execSync } from 'child_process';
 import path from 'path';
 
-const JSON_API_URL = process.env.JSON_API_URL || 'http://localhost:7575';
-let cachedPackageId = null;
+const JSON_API_URL = process.env.CANTON_URL || 'http://localhost:7575';
+const PACKAGE_ID = "76c6acbcb3ebde7e60126dd183c00a89c07ad8e6162f4abbda99e6c0cb17d7f7";
 
-// Dynamically resolve package ID by running damlc inspect-dar
 export function getPackageId() {
-  if (cachedPackageId) return cachedPackageId;
-  
-  try {
-    const projectDir = 'c:/Users/USER/Desktop/canton/daml';
-    const darPath = path.join(projectDir, '.daml/dist/darkpool-1.0.0.dar');
-    const envPath = 'C:\\Users\\USER\\Desktop\\canton\\jdk17\\jdk-17.0.19+10\\bin;C:\\Users\\USER\\Desktop\\canton\\bin;' + process.env.PATH;
-    const cmd = `daml damlc inspect-dar --json "${darPath}"`;
-    
-    console.log('[Ledger] Resolving package ID from DAR...');
-    const stdout = execSync(cmd, {
-      env: { ...process.env, PATH: envPath, DAML_HOME: 'C:\\Users\\USER\\Desktop\\canton' }
-    }).toString();
-    
-    const darInfo = JSON.parse(stdout);
-    const packages = darInfo.packages;
-    for (const pid of Object.keys(packages)) {
-      if (packages[pid].name === 'darkpool') {
-        cachedPackageId = pid;
-        console.log(`[Ledger] Resolved 'darkpool' package ID: ${pid}`);
-        return pid;
-      }
-    }
-  } catch (err) {
-    console.warn('[Ledger] Failed to resolve package ID dynamically:', err.message);
-  }
-  
-  // Fallback
-  return '8a9cdf3d31f962781d9fbb256caec8d93d9aa980ff5aa8fd3b01f125e8838464';
+  return PACKAGE_ID;
 }
 
 // Map short template name to fully qualified template ID
@@ -72,7 +44,7 @@ async function request(party, endpoint, body) {
 
 export async function createContract(party, shortTemplateId, payload) {
   const templateId = getFullTemplateId(shortTemplateId);
-  return await request(party, '/v1/create', {
+  return await request(party, '/v2/create', {
     templateId,
     payload
   });
@@ -80,7 +52,7 @@ export async function createContract(party, shortTemplateId, payload) {
 
 export async function exerciseChoice(party, shortTemplateId, contractId, choice, argument = {}) {
   const templateId = getFullTemplateId(shortTemplateId);
-  return await request(party, '/v1/exercise', {
+  return await request(party, '/v2/exercise', {
     templateId,
     contractId,
     choice,
@@ -90,7 +62,7 @@ export async function exerciseChoice(party, shortTemplateId, contractId, choice,
 
 export async function queryContracts(party, shortTemplateId) {
   const templateId = getFullTemplateId(shortTemplateId);
-  return await request(party, '/v1/query', {
+  return await request(party, '/v2/query', {
     templateIds: [templateId]
   });
 }
