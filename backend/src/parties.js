@@ -1,13 +1,12 @@
 import Buffer from 'buffer';
 
-// Map of user-friendly names to actual ledger party IDs
 export const partyMap = {
-  Alice: '',
-  Bob: '',
-  Carol: '', // Regulator
-  MatchEngine: '',
-  MarketMaker: '',
-  Custodian: ''
+  Alice:       process.env.ALICE_PARTY       || 'Alice',
+  Bob:         process.env.BOB_PARTY         || 'Bob', 
+  Carol:       process.env.CAROL_PARTY       || 'Carol',
+  MatchEngine: process.env.MATCH_ENGINE_PARTY || 'MatchEngine',
+  MarketMaker: process.env.MARKET_MAKER_PARTY || 'MarketMaker',
+  Custodian:   process.env.CUSTODIAN_PARTY   || 'Custodian',
 };
 
 // Generates an unsigned/mock JWT token for the JSON API (supports single party or array of parties)
@@ -30,80 +29,11 @@ export function generateToken(partyIdOrList) {
   return `${b64Header}.${b64Payload}.dummy_signature`;
 }
 
-// Function to allocate a party on the ledger
 export async function allocateParty(jsonApiUrl, name) {
-  try {
-    const token = generateToken(name);
-    const res = await fetch(`${jsonApiUrl}/v2/parties/allocate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        partyIdHint: name,
-        displayName: name
-      })
-    });
-    
-    const data = await res.json();
-    if (res.ok && data.result) {
-      console.log(`[Ledger] Successfully allocated party '${name}':`, data.result.identifier);
-      return data.result.identifier;
-    } else {
-      console.warn(`[Ledger] Party allocation response for '${name}':`, data);
-    }
-  } catch (err) {
-    console.error(`[Ledger] Error allocating party '${name}':`, err.message);
-  }
-  return name; // Fallback
+  console.warn(`[Ledger] Dynamic allocation disabled on DevNet for '${name}'. Using fallback.`);
+  return name;
 }
 
-// Function to resolve party mappings from the ledger
 export async function resolveParties(jsonApiUrl) {
-  try {
-    const token = generateToken('MatchEngine');
-    const res = await fetch(`${jsonApiUrl}/v2/parties`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      }
-    });
-    
-    if (!res.ok) {
-      console.warn('Failed to fetch parties list from JSON API.');
-    } else {
-      const data = await res.json();
-      if (data.result && Array.isArray(data.result)) {
-        for (const p of data.result) {
-          const displayName = p.displayName || '';
-          const identifier = p.identifier;
-          
-          if (displayName.includes('Alice')) partyMap.Alice = identifier;
-          else if (displayName.includes('Bob')) partyMap.Bob = identifier;
-          else if (displayName.includes('Carol')) partyMap.Carol = identifier;
-          else if (displayName.includes('MatchEngine')) partyMap.MatchEngine = identifier;
-          else if (displayName.includes('MarketMaker')) partyMap.MarketMaker = identifier;
-          else if (displayName.includes('Custodian')) partyMap.Custodian = identifier;
-        }
-      }
-    }
-    
-    // Allocate any parties that could not be resolved from the ledger
-    for (const key of Object.keys(partyMap)) {
-      if (!partyMap[key]) {
-        console.log(`[Ledger] Party '${key}' not found. Allocating...`);
-        partyMap[key] = await allocateParty(jsonApiUrl, key);
-      }
-    }
-    
-    console.log('Resolved Party Mapping:', partyMap);
-  } catch (err) {
-    console.error('Error resolving parties:', err.message);
-    // Fallback to name keys
-    Object.keys(partyMap).forEach(key => {
-      partyMap[key] = key;
-    });
-  }
+  console.log('Using Hardcoded Party Mapping:', partyMap);
 }
