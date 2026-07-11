@@ -24,7 +24,7 @@ const TraderDashboard = () => {
   const { address, partyId, jwt, disconnect } = useWalletStore();
   const {
     role, intents, proposals, buyerAccepted, settlements, holdings, auditRecords,
-    fetchData, postIntent, acceptProposal, executeSettlement, mintHolding,
+    fetchData, postIntent, acceptProposal, executeSettlement, mintHolding, error: tradingError
   } = useTradingStore();
 
   const [asset, setAsset] = useState('BTC');
@@ -53,7 +53,11 @@ const TraderDashboard = () => {
     return partyId || address;
   };
 
-  const updateData = () => fetchData(getTraderName(), jwt);
+  const updateData = () => {
+    const currentState = useWalletStore.getState();
+    const currentTraderName = currentState.partyId || currentState.address;
+    return fetchData(currentTraderName, currentState.jwt);
+  };
 
   const isInitialFetch = useRef(true);
   useEffect(() => {
@@ -71,6 +75,7 @@ const TraderDashboard = () => {
       if (msg.type === 'LOAN_REQUESTED') showToast(`Loan requested for ${msg.trader}`);
       if (msg.type === 'LOAN_FUNDED') showToast(`Loan funded by Market Maker`);
       if (msg.type === 'LOAN_REPAID') showToast(`Loan repaid by trader`);
+      if (msg.type === 'HOLDING_MINTED') showToast(`Minted ${msg.amount} ${msg.instrument}`);
       updateData();
     };
 
@@ -161,10 +166,10 @@ const TraderDashboard = () => {
   };
 
   let usdBal = 0, btcBal = 0, ustbBal = 0;
-  holdings.forEach(h => {
-    if (h.payload.instrument === 'USD')  usdBal  += parseFloat(h.payload.amount);
-    if (h.payload.instrument === 'BTC')  btcBal  += parseFloat(h.payload.amount);
-    if (h.payload.instrument === 'USTB') ustbBal += parseFloat(h.payload.amount);
+  (holdings || []).forEach(h => {
+    if (h?.payload?.instrument === 'USD')  usdBal  += parseFloat(h.payload.amount || 0);
+    if (h?.payload?.instrument === 'BTC')  btcBal  += parseFloat(h.payload.amount || 0);
+    if (h?.payload?.instrument === 'USTB') ustbBal += parseFloat(h.payload.amount || 0);
   });
 
   const isBuyer  = role === 'BUYER';
@@ -235,10 +240,16 @@ const TraderDashboard = () => {
             <span className="label block mb-1.5">Canton Party ID</span>
             <div className="font-data text-xs text-dp-muted break-all leading-relaxed">{partyId || '—'}</div>
           </div>
+          
+          {tradingError && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3.5 mt-2 text-red-600 text-xs font-mono break-all">
+              DEBUG ERROR: {tradingError}
+            </div>
+          )}
 
           {/* Balances */}
           <div>
-            <span className="label block mb-3">Ledger Balances</span>
+            <span className="label block mb-3">Ledger Balances (Debug: {(holdings || []).length} items)</span>
             <div className="flex flex-col gap-1">
               {[
                 { label: 'USD Cash',    value: `$${usdBal.toLocaleString()}`,     color: '#1A7F4B' },
