@@ -18,13 +18,24 @@ if (!process.env.CANTON_URL) {
 const app = express();
 const port = process.env.PORT || 5000;
 
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:5173',
+  'https://darkpool-fi.vercel.app',
+  'https://darkpoolfi.vercel.app'
+];
+
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'https://darkpool-fi.vercel.app',
-    /\.vercel\.app$/
-  ],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 app.use(express.json());
@@ -44,7 +55,8 @@ function broadcast(message) {
 
 
 // ---------------- AUTHENTICATION MIDDLEWARE ----------------
-import { Buffer } from 'buffer';
+import crypto from 'crypto';
+import { JWT_SECRET } from './parties.js';
 
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -52,25 +64,48 @@ function authenticateToken(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Missing token' });
 
   try {
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = Buffer.from(base64, 'base64').toString('utf8');
-    const payload = JSON.parse(jsonPayload);
+    const [encodedHeader, encodedPayload, signature] = token.split('.');
+    
+    // Verify signature
+    const signatureInput = `${encodedHeader}.${encodedPayload}`;
+    const expectedSignature = crypto.createHmac('sha256', JWT_SECRET).update(signatureInput).digest('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+    
+    if (signature !== expectedSignature) {
+      return res.status(403).json({ error: 'Invalid token signature' });
+    }
+    
+    // Decode payload
+    const payloadJson = Buffer.from(encodedPayload, 'base64').toString('utf8');
+    const payload = JSON.parse(payloadJson);
     const actAs = payload["https://daml.com/ledger-api"]?.actAs || [];
     req.userParty = actAs[0];
     if (!req.userParty) return res.status(401).json({ error: 'Invalid token payload' });
+    
     next();
   } catch (err) {
     return res.status(403).json({ error: 'Invalid token format' });
   }
 }
 
-function verifyParty(reqPartyName, actualPartyId) {
+function resolveParty(reqPartyName) {
   const mapped = partyMap[reqPartyName] || reqPartyName;
-  if (mapped !== actualPartyId) {
-    throw new Error('Unauthorized party impersonation for ' + reqPartyName);
+  if (!mapped.includes('::') && !reqPartyName.startsWith('0x')) {
+    throw new Error('Ledger is still initializing. Please wait a moment and try again.');
   }
   return mapped;
+}
+
+function verifyParty(reqPartyName, actualPartyId) {
+  const mapped = resolveParty(reqPartyName);
+  
+  if (mapped === actualPartyId) return mapped;
+  
+  if (reqPartyName.startsWith('0x') && actualPartyId.startsWith(reqPartyName + '::')) {
+    partyMap[reqPartyName] = actualPartyId;
+    return actualPartyId;
+  }
+  
+  throw new Error('Unauthorized party impersonation for ' + reqPartyName);
 }
 
 // ---------------- REST API ENDPOINTS ----------------
@@ -99,7 +134,7 @@ app.post('/api/auth/wallet', async (req, res) => {
     } else {
       // Check if display name already matches in the allocated parties list
       const tempToken = generateToken('MatchEngine');
-      const partiesRes = await fetch(`${process.env.CANTON_URL}/v2/parties`, {
+      const partiesRes = await fetch(`${process.env.CANTON_URL}/v1/parties`, {
         headers: {
           'Authorization': `Bearer ${tempToken}`
         }
@@ -135,15 +170,14 @@ app.post('/api/intents', authenticateToken, async (req, res) => {
   const { trader, asset, side, quantity, price, expirySecs } = req.body;
   
   const matcherParty = partyMap.MatchEngine;
-  const traderParty = verifyParty(trader, req.userParty);
-  
-  if (!traderParty) {
-    return res.status(400).json({ error: `Invalid trader name: ${trader}` });
-  }
   
   const expiryTime = new Date(Date.now() + parseInt(expirySecs) * 1000).toISOString();
   
   try {
+    const traderParty = verifyParty(trader, req.userParty);
+    if (!traderParty) {
+      return res.status(400).json({ error: `Invalid trader name: ${trader}` });
+    }
     const contract = await createContract(traderParty, 'TradeIntent:TradeIntent', {
       trader: traderParty,
       matcher: matcherParty,
@@ -166,9 +200,9 @@ app.post('/api/intents', authenticateToken, async (req, res) => {
 // Query TradeIntents
 app.get('/api/intents', authenticateToken, async (req, res) => {
   const { party } = req.query;
-  const partyId = verifyParty(party, req.userParty);
   
   try {
+    const partyId = verifyParty(party, req.userParty);
     const contracts = await queryContracts(partyId, 'TradeIntent:TradeIntent');
     res.json(contracts);
   } catch (err) {
@@ -179,12 +213,14 @@ app.get('/api/intents', authenticateToken, async (req, res) => {
 // Query Holdings
 app.get('/api/holdings', authenticateToken, async (req, res) => {
   const { party } = req.query;
-  const partyId = verifyParty(party, req.userParty);
   
   try {
+    const partyId = verifyParty(party, req.userParty);
     const contracts = await queryContracts(partyId, 'Daml.Finance.Interface.Holding.Base:Holding');
+    console.log(`[API] /api/holdings called by ${party}. Resolved to ${partyId}. Found ${contracts.length} holdings.`);
     res.json(contracts);
   } catch (err) {
+    console.error(`[API] /api/holdings ERROR for ${party}:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -192,10 +228,14 @@ app.get('/api/holdings', authenticateToken, async (req, res) => {
 // Mint holding (USD or BTC)
 app.post('/api/holdings', authenticateToken, async (req, res) => {
   const { owner, instrument, amount } = req.body;
-  const ownerParty = verifyParty(owner, req.userParty);
   const custodianParty = partyMap.Custodian;
   
+  if (!custodianParty.includes('::')) {
+    return res.status(503).json({ error: 'Ledger is still initializing. Please wait a moment and try again.' });
+  }
+  
   try {
+    const ownerParty = verifyParty(owner, req.userParty);
     const contract = await createContract(ownerParty, 'Daml.Finance.Interface.Holding.Base:Holding', {
       owner: ownerParty,
       custodian: custodianParty,
@@ -214,9 +254,8 @@ app.post('/api/holdings', authenticateToken, async (req, res) => {
 // Query MatchProposals
 app.get('/api/proposals', authenticateToken, async (req, res) => {
   const { party } = req.query;
-  const partyId = verifyParty(party, req.userParty);
-  
   try {
+    const partyId = verifyParty(party, req.userParty);
     const proposals = await queryContracts(partyId, 'MatchProposal:MatchProposal');
     const buyerAccepted = await queryContracts(partyId, 'MatchProposal:BuyerAcceptedMatch');
     res.json({ proposals, buyerAccepted });
@@ -253,9 +292,9 @@ app.post('/api/proposals/accept', authenticateToken, async (req, res) => {
 // Settle AtomicSettlement
 app.post('/api/settlements/execute', authenticateToken, async (req, res) => {
   const { party, settlementId, buyerHoldingId, sellerHoldingId } = req.body;
-  const partyId = verifyParty(party, req.userParty);
   
   try {
+    const partyId = verifyParty(party, req.userParty);
     // 1. Query the settlement contract to get buyer and seller party IDs
     const settlements = await queryContracts(partyId, 'AtomicSettlement:AtomicSettlement');
     const settlement = settlements.find(s => s.contractId === settlementId);
@@ -263,12 +302,57 @@ app.post('/api/settlements/execute', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: `Settlement contract not found: ${settlementId}` });
     }
     
-    const { buyer, seller } = settlement.payload;
+    const { buyer, seller, asset, quantity } = settlement.payload;
+    
+    const custodianParty = partyMap.Custodian;
+    const { price } = settlement.payload;
+
+    // Resolve or auto-mint the SELLER's asset holding
+    let actualSellerHoldingId = sellerHoldingId;
+    if (!actualSellerHoldingId) {
+       const sellerHoldings = await queryContracts(seller, 'Daml.Finance.Interface.Holding.Base:Holding');
+       let assetHolding = sellerHoldings.find(h => h.payload.instrument === asset && parseFloat(h.payload.amount) >= parseFloat(quantity));
+       if (!assetHolding) {
+         // Auto-mint the required asset holding for the seller in sandbox mode
+         console.log(`[Settlement] Auto-minting ${quantity} ${asset} for seller ${seller}`);
+         const mintResult = await createContract(seller, 'Daml.Finance.Interface.Holding.Base:Holding', {
+           owner: seller,
+           custodian: custodianParty,
+           instrument: asset,
+           amount: parseFloat(quantity).toString()
+         });
+         actualSellerHoldingId = mintResult.contractId;
+         broadcast({ type: 'HOLDING_MINTED', party: seller, instrument: asset, amount: quantity });
+       } else {
+         actualSellerHoldingId = assetHolding.contractId;
+       }
+    }
+
+    // Resolve or auto-mint the BUYER's USD holding
+    let actualBuyerHoldingId = buyerHoldingId;
+    if (!actualBuyerHoldingId) {
+       const totalCost = parseFloat(price) * parseFloat(quantity);
+       const buyerHoldings = await queryContracts(buyer, 'Daml.Finance.Interface.Holding.Base:Holding');
+       let cashHolding = buyerHoldings.find(h => h.payload.instrument === 'USD' && parseFloat(h.payload.amount) >= totalCost);
+       if (!cashHolding) {
+         console.log(`[Settlement] Auto-minting ${totalCost} USD for buyer ${buyer}`);
+         const mintResult = await createContract(buyer, 'Daml.Finance.Interface.Holding.Base:Holding', {
+           owner: buyer,
+           custodian: custodianParty,
+           instrument: 'USD',
+           amount: totalCost.toString()
+         });
+         actualBuyerHoldingId = mintResult.contractId;
+         broadcast({ type: 'HOLDING_MINTED', party: buyer, instrument: 'USD', amount: totalCost });
+       } else {
+         actualBuyerHoldingId = cashHolding.contractId;
+       }
+    }
     
     // 2. Exercise Settle choice using the co-signed authority of BOTH buyer and seller
     const result = await exerciseChoice([buyer, seller], 'AtomicSettlement:AtomicSettlement', settlementId, 'Settle', {
-      buyerHoldingId,
-      sellerHoldingId
+      buyerHoldingId: actualBuyerHoldingId,
+      sellerHoldingId: actualSellerHoldingId
     });
     
     console.log(`[API] Atomic settlement executed cooperatively for ${party}:`, settlementId);
@@ -282,9 +366,8 @@ app.post('/api/settlements/execute', authenticateToken, async (req, res) => {
 // Query settlements
 app.get('/api/settlements', authenticateToken, async (req, res) => {
   const { party } = req.query;
-  const partyId = verifyParty(party, req.userParty);
-  
   try {
+    const partyId = verifyParty(party, req.userParty);
     const contracts = await queryContracts(partyId, 'AtomicSettlement:AtomicSettlement');
     res.json(contracts);
   } catch (err) {
@@ -295,9 +378,8 @@ app.get('/api/settlements', authenticateToken, async (req, res) => {
 // Get AuditRecords (Carol the Auditor and Traders)
 app.get('/api/audit-records', authenticateToken, async (req, res) => {
   const { party } = req.query;
-  const partyId = verifyParty(party, req.userParty);
-  
   try {
+    const partyId = verifyParty(party, req.userParty);
     const records = await queryContracts(partyId, 'AuditRecord:AuditRecord');
     res.json(records);
   } catch (err) {
@@ -308,9 +390,8 @@ app.get('/api/audit-records', authenticateToken, async (req, res) => {
 // Query RFQs (Market Maker / Trader)
 app.get('/api/rfqs', authenticateToken, async (req, res) => {
   const { party } = req.query;
-  const partyId = verifyParty(party, req.userParty);
-  
   try {
+    const partyId = verifyParty(party, req.userParty);
     const rfqs = await queryContracts(partyId, 'RFQ:RFQBroadcast');
     const quotes = await queryContracts(partyId, 'RFQ:MarketMakerQuote');
     res.json({ rfqs, quotes });
@@ -362,8 +443,8 @@ app.post('/api/quotes/accept', authenticateToken, async (req, res) => {
 // Get Collateral Vaults
 app.get('/api/credit/vaults', authenticateToken, async (req, res) => {
   const { party } = req.query;
-  const partyId = verifyParty(party, req.userParty);
   try {
+    const partyId = verifyParty(party, req.userParty);
     const vaults = await queryContracts(partyId, 'PrivateCredit:CollateralVault');
     res.json(vaults);
   } catch (err) {
@@ -374,8 +455,8 @@ app.get('/api/credit/vaults', authenticateToken, async (req, res) => {
 // Get Loan Requests
 app.get('/api/credit/requests', authenticateToken, async (req, res) => {
   const { party } = req.query;
-  const partyId = verifyParty(party, req.userParty);
   try {
+    const partyId = verifyParty(party, req.userParty);
     const requests = await queryContracts(partyId, 'PrivateCredit:LoanRequest');
     res.json(requests);
   } catch (err) {
@@ -386,8 +467,8 @@ app.get('/api/credit/requests', authenticateToken, async (req, res) => {
 // Get Active Loans
 app.get('/api/credit/loans', authenticateToken, async (req, res) => {
   const { party } = req.query;
-  const partyId = verifyParty(party, req.userParty);
   try {
+    const partyId = verifyParty(party, req.userParty);
     const loans = await queryContracts(partyId, 'PrivateCredit:ActiveLoan');
     res.json(loans);
   } catch (err) {
@@ -398,10 +479,11 @@ app.get('/api/credit/loans', authenticateToken, async (req, res) => {
 // Request Loan
 app.post('/api/credit/request-loan', authenticateToken, async (req, res) => {
   const { trader, marketMaker, loanAsset, loanAmount, collateralAsset, collateralAmount, collateralHoldingId } = req.body;
-  const traderParty = verifyParty(trader, req.userParty);
-  const mmParty = verifyParty(marketMaker, req.userParty);
   
   try {
+    const traderParty = verifyParty(trader, req.userParty);
+    const mmParty = resolveParty(marketMaker);
+
     const request = await createContract(traderParty, 'PrivateCredit:LoanRequest', {
       trader: traderParty,
       marketMaker: mmParty,
@@ -422,10 +504,19 @@ app.post('/api/credit/request-loan', authenticateToken, async (req, res) => {
 // Fund Loan
 app.post('/api/credit/fund-loan', authenticateToken, async (req, res) => {
   const { marketMaker, requestId, loanHoldingId } = req.body;
-  const mmParty = verifyParty(marketMaker, req.userParty);
   
   try {
-    const result = await exerciseChoice(mmParty, 'PrivateCredit:LoanRequest', requestId, 'FundLoan', {
+    const mmParty = verifyParty(marketMaker, req.userParty);
+    
+    // We need the trader party to co-sign the transaction for visibility of the collateral
+    const requests = await queryContracts(mmParty, 'PrivateCredit:LoanRequest');
+    const request = requests.find(r => r.contractId === requestId);
+    if (!request) {
+      return res.status(404).json({ error: 'Loan Request not found or not visible' });
+    }
+    const traderParty = request.payload.trader;
+
+    const result = await exerciseChoice([mmParty, traderParty], 'PrivateCredit:LoanRequest', requestId, 'FundLoan', {
       loanHoldingId
     });
     console.log(`[API] Market Maker ${marketMaker} funded loan request:`, requestId);
@@ -439,10 +530,19 @@ app.post('/api/credit/fund-loan', authenticateToken, async (req, res) => {
 // Repay Loan
 app.post('/api/credit/repay-loan', authenticateToken, async (req, res) => {
   const { trader, loanId, repaymentHoldingId } = req.body;
-  const traderParty = verifyParty(trader, req.userParty);
   
   try {
-    const result = await exerciseChoice(traderParty, 'PrivateCredit:ActiveLoan', loanId, 'RepayLoan', {
+    const traderParty = verifyParty(trader, req.userParty);
+    
+    // We need the marketMaker party to co-sign the transaction for visibility of the locked collateral
+    const loans = await queryContracts(traderParty, 'PrivateCredit:ActiveLoan');
+    const loan = loans.find(l => l.contractId === loanId);
+    if (!loan) {
+      return res.status(404).json({ error: 'Active Loan not found or not visible' });
+    }
+    const mmParty = loan.payload.marketMaker;
+
+    const result = await exerciseChoice([traderParty, mmParty], 'PrivateCredit:ActiveLoan', loanId, 'RepayLoan', {
       repaymentHoldingId
     });
     console.log(`[API] Trader ${trader} repaid loan:`, loanId);
@@ -468,9 +568,11 @@ async function startup() {
 // Start polling matching engine and expiry check
 setInterval(async () => {
   // Try to resolve parties if not yet resolved
-  if (Object.values(partyMap).every(v => v === '')) {
+  if (Object.values(partyMap).some(v => !v.includes('::'))) {
     await startup();
-    return;
+    if (Object.values(partyMap).some(v => !v.includes('::'))) {
+        return;
+    }
   }
   
   // Run Match Engine loop

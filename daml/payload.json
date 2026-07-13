@@ -1,0 +1,13 @@
+{
+  "templateId": "76c6acbcb3ebde7e60126dd183c00a89c07ad8e6162f4abbda99e6c0cb17d7f7:TradeIntent:TradeIntent",
+  "payload": {
+    "trader": "market_maker",
+    "matcher": "market_maker",
+    "asset": "USD",
+    "side": "BUY",
+    "quantity": "100.0",
+    "price": "1.0",
+    "expiry": "2026-12-31T23:59:59Z",
+    "status": "ACTIVE"
+  }
+}

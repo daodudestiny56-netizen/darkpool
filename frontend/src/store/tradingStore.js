@@ -72,17 +72,17 @@ export const useTradingStore = create((set, get) => ({
       const activeLoans = loanRes.ok ? await loanRes.json() : [];
 
       set({
-        holdings,
-        intents,
-        proposals: propData.proposals || [],
-        buyerAccepted: propData.buyerAccepted || [],
-        settlements,
-        rfqs: rfqData.rfqs || [],
-        quotes: rfqData.quotes || [],
-        auditRecords,
-        vaults,
-        loanRequests,
-        activeLoans,
+        holdings: Array.isArray(holdings) ? holdings : [],
+        intents: Array.isArray(intents) ? intents : [],
+        proposals: Array.isArray(propData.proposals) ? propData.proposals : [],
+        buyerAccepted: Array.isArray(propData.buyerAccepted) ? propData.buyerAccepted : [],
+        settlements: Array.isArray(settlements) ? settlements : [],
+        rfqs: Array.isArray(rfqData.rfqs) ? rfqData.rfqs : [],
+        quotes: Array.isArray(rfqData.quotes) ? rfqData.quotes : [],
+        auditRecords: Array.isArray(auditRecords) ? auditRecords : [],
+        vaults: Array.isArray(vaults) ? vaults : [],
+        loanRequests: Array.isArray(loanRequests) ? loanRequests : [],
+        activeLoans: Array.isArray(activeLoans) ? activeLoans : [],
         isLoading: false
       });
     } catch (err) {

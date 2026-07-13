@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useWalletStore } from '../store/walletStore';
 import { useTradingStore } from '../store/tradingStore';
 import { Radio, RefreshCw, Activity, LogOut } from 'lucide-react';
+import { parseError } from '../utils/errorHandler';
 
 const MarketMaker = () => {
   const navigate = useNavigate();
@@ -12,6 +13,7 @@ const MarketMaker = () => {
   const [activeTab, setActiveTab] = useState('rfq');
   const [quotePrices, setQuotePrices] = useState({});
   const [isLoading, setIsLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
 
   const showToast = (msg) => {
@@ -38,7 +40,7 @@ const MarketMaker = () => {
       await submitQuote('MarketMaker', rfqId, quotePrice, jwt);
       showToast('Quote submitted successfully.');
       updateData();
-    } catch (err) { showToast(`Quote failed: ${err.message}`); }
+    } catch (err) { showToast(`Quote failed: ${parseError(err.message)}`); }
   };
 
   const handleFaucetMint = async (instrument, amount) => {
@@ -46,18 +48,25 @@ const MarketMaker = () => {
       await mintHolding('MarketMaker', instrument, amount, jwt);
       showToast(`Minted ${amount} ${instrument}`);
       updateData();
-    } catch (err) { showToast(`Mint failed: ${err.message}`); }
+    } catch (err) { showToast(`Mint failed: ${parseError(err.message)}`); }
   };
 
   const handleFundLoan = async (requestId, loanAsset, loanAmount) => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     try {
-      const loanHolding = holdings.find(h => h.payload.instrument === loanAsset && parseFloat(h.payload.amount) >= parseFloat(loanAmount));
-      if (!loanHolding) { alert(`You need at least ${loanAmount} ${loanAsset} to fund this loan. Mint from faucet.`); return; }
+      const loanHoldings = holdings
+        .filter(h => h.payload.instrument === loanAsset && parseFloat(h.payload.amount) >= parseFloat(loanAmount))
+        .sort((a, b) => parseFloat(b.payload.amount) - parseFloat(a.payload.amount));
+      const loanHolding = loanHoldings[0];
+      
+      if (!loanHolding) { alert(`You do not have enough ${loanAsset} to fund this loan. Please mint more from the faucet.`); setIsSubmitting(false); return; }
       
       await fundLoan('MarketMaker', requestId, loanHolding.contractId, jwt);
       showToast('Loan Funded Successfully.');
       updateData();
-    } catch (err) { showToast(`Funding failed: ${err.message}`); }
+    } catch (err) { showToast(`Funding failed: ${parseError(err.message)}`); }
+    finally { setIsSubmitting(false); }
   };
 
   let usdBal = 0, btcBal = 0;
@@ -295,9 +304,10 @@ const MarketMaker = () => {
                       </div>
                       <button
                         onClick={() => handleFundLoan(req.contractId, req.payload.loanAsset, req.payload.loanAmount)}
-                        className="btn-indigo text-xs px-5 py-2 whitespace-nowrap"
+                        disabled={isSubmitting}
+                        className={`btn-indigo text-xs px-5 py-2 whitespace-nowrap ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
-                        Fund Loan ({req.payload.loanAmount} {req.payload.loanAsset})
+                        {isSubmitting ? 'Funding...' : `Fund Loan (${req.payload.loanAmount} ${req.payload.loanAsset})`}
                       </button>
                     </div>
                   ))}
