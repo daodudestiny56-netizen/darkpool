@@ -6,6 +6,7 @@ import ExpiryRing from '../components/trading/ExpiryRing';
 import PrivacyBadge from '../components/trading/PrivacyBadge';
 import MatchAlert from '../components/trading/MatchAlert';
 import { Activity, ArrowRight, RefreshCw, LogOut, Loader2 } from 'lucide-react';
+import { parseError } from '../utils/errorHandler';
 
 const API_URL = 'http://localhost:5000';
 
@@ -98,7 +99,7 @@ const TraderDashboard = () => {
       await postIntent(getTraderName(), asset, role === 'BUYER' ? 'BUY' : 'SELL', quantity, price, expirySecs, jwt);
       showToast('Intent posted successfully.');
       updateData();
-    } catch (err) { showToast(`Error: ${err.message}`); }
+    } catch (err) { showToast(`Error: ${parseError(err.message)}`); }
     finally { setIsSubmitting(false); }
   };
 
@@ -107,25 +108,25 @@ const TraderDashboard = () => {
       await acceptProposal(getTraderName(), proposalId, roleType, jwt);
       showToast('Proposal signed.');
       updateData();
-    } catch (err) { showToast(`Sign failed: ${err.message}`); }
+    } catch (err) { showToast(`Sign failed: ${parseError(err.message)}`); }
   };
 
   const handleSettleTrade = async (settlementId, buyer, seller, assetClass) => {
     try {
-      showToast('Resolving counterparty details…');
-      const usdHolding = holdings.find(h => h.payload.instrument === 'USD');
-      if (role === 'BUYER' && !usdHolding) { alert('You need a USD holding. Mint some from the Faucet.'); return; }
-      const cpName = (seller?.includes('MarketMaker') || seller?.includes('party-083b')) ? 'MarketMaker' : 'Bob';
-      const cpRes = await fetch(`${API_URL}/api/holdings?party=${cpName}`, { headers: { Authorization: `Bearer ${jwt}` } });
-      if (!cpRes.ok) throw new Error('Failed to resolve counterparty holding');
-      const cpHoldings = await cpRes.json();
-      const assetHolding = cpHoldings.find(h => h.payload.instrument === assetClass);
-      if (!assetHolding) { alert(`${cpName} has no ${assetClass} holding to settle!`); return; }
       showToast('Submitting atomic swap…');
-      await executeSettlement(getTraderName(), settlementId, usdHolding.contractId, assetHolding.contractId, jwt);
+      // Pick the largest USD holding available to ensure we have sufficient funds
+      const usdHoldings = holdings
+        .filter(h => h.payload.instrument === 'USD')
+        .sort((a, b) => parseFloat(b.payload.amount) - parseFloat(a.payload.amount));
+      const usdHolding = usdHoldings[0];
+      
+      if (role === 'BUYER' && !usdHolding) { alert('You do not have enough funds. Please mint USD from the Faucet.'); return; }
+      const cashHoldingId = role === 'BUYER' ? usdHolding.contractId : null;
+      // We pass null for the seller's holding ID, the backend will resolve it natively
+      await executeSettlement(getTraderName(), settlementId, cashHoldingId, null, jwt);
       showToast('Atomic Settlement Complete!');
       updateData();
-    } catch (err) { showToast(`Settlement failed: ${err.message}`); }
+    } catch (err) { showToast(`Settlement failed: ${parseError(err.message)}`); }
   };
 
   const handleFaucetMint = async (instrument, amount) => {
@@ -133,7 +134,7 @@ const TraderDashboard = () => {
       await mintHolding(getTraderName(), instrument, amount, jwt);
       showToast(`Minted ${amount} ${instrument}`);
       updateData();
-    } catch (err) { showToast(`Mint failed: ${err.message}`); }
+    } catch (err) { showToast(`Mint failed: ${parseError(err.message)}`); }
   };
 
   const { requestLoan, repayLoan, vaults, loanRequests, activeLoans } = useTradingStore();
@@ -144,25 +145,25 @@ const TraderDashboard = () => {
     try {
       // Find collateral holding
       const cHolding = holdings.find(h => h.payload.instrument === collateralAsset && parseFloat(h.payload.amount) >= parseFloat(collateralAmount));
-      if (!cHolding) { alert(`You need at least ${collateralAmount} ${collateralAsset} holding to use as collateral. Mint from faucet.`); setIsSubmitting(false); return; }
+      if (!cHolding) { alert(`You do not have enough ${collateralAsset} to use as collateral. Please mint more from the faucet.`); setIsSubmitting(false); return; }
       
       const mmParty = 'MarketMaker';
       await requestLoan(getTraderName(), mmParty, loanAsset, loanAmount, collateralAsset, collateralAmount, cHolding.contractId, jwt);
       showToast('Loan Request submitted to Market Makers.');
       updateData();
-    } catch (err) { showToast(`Loan request failed: ${err.message}`); }
+    } catch (err) { showToast(`Loan request failed: ${parseError(err.message)}`); }
     finally { setIsSubmitting(false); }
   };
 
   const handleRepayLoan = async (loanId, loanAsset, loanAmount) => {
     try {
       const repaymentHolding = holdings.find(h => h.payload.instrument === loanAsset && parseFloat(h.payload.amount) >= parseFloat(loanAmount));
-      if (!repaymentHolding) { alert(`You need at least ${loanAmount} ${loanAsset} to repay this loan.`); return; }
+      if (!repaymentHolding) { alert(`You do not have enough ${loanAsset} to repay this loan.`); return; }
       
       await repayLoan(getTraderName(), loanId, repaymentHolding.contractId, jwt);
       showToast('Loan repaid successfully. Collateral unlocked.');
       updateData();
-    } catch (err) { showToast(`Repayment failed: ${err.message}`); }
+    } catch (err) { showToast(`Repayment failed: ${parseError(err.message)}`); }
   };
 
   let usdBal = 0, btcBal = 0, ustbBal = 0;
@@ -274,9 +275,9 @@ const TraderDashboard = () => {
             <span className="label block mb-3">Sandbox Faucet</span>
             <div className="grid grid-cols-2 gap-2">
               {[
-                ['+ $50k USD', 'USD', 50000],
-                ['+ 2 BTC',    'BTC', 2.0],
-                ['+ $10k USTB','USTB', 10000],
+                ['+ $500k USD', 'USD', 500000],
+                ['+ 5 BTC',    'BTC', 5.0],
+                ['+ $100k USTB','USTB', 100000],
               ].map(([label, instrument, amount]) => (
                 <button
                   key={label}

@@ -4,6 +4,7 @@ import { useWalletStore } from '../store/walletStore';
 import { useTradingStore } from '../store/tradingStore';
 import { Shield, RefreshCw, BarChart3, Lock, LogOut, Loader2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { parseError } from '../utils/errorHandler';
 
 const API_URL = 'http://localhost:5000';
 
@@ -41,7 +42,7 @@ const PrivacyProofWidget = ({ jwt }) => {
         }
       } else { throw new Error('API error'); }
     } catch (err) {
-      setLines(p => [...p, `[ERROR] ${err.message}`]);
+      setLines(p => [...p, `[ERROR] ${parseError(err.message)}`]);
       setStatus('fail');
     } finally { setIsRunning(false); }
   };

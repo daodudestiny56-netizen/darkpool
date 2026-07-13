@@ -2,8 +2,8 @@ import { generateToken } from './parties.js';
 import { execSync } from 'child_process';
 import path from 'path';
 
-const CANTON_URL = process.env.CANTON_URL;
-const PACKAGE_ID = "76c6acbcb3ebde7e60126dd183c00a89c07ad8e6162f4abbda99e6c0cb17d7f7";
+
+const PACKAGE_ID = "8014f10575db230e3849e49f519f22bacee5091a4063d71ee2eb077b9172ad28";
 
 export function getPackageId() {
   return PACKAGE_ID;
@@ -18,7 +18,7 @@ export function getFullTemplateId(shortName) {
 // Helper to make API requests
 async function request(party, endpoint, body) {
   const token = generateToken(party);
-  const url = `${CANTON_URL}${endpoint}`;
+  const url = `${process.env.CANTON_URL}${endpoint}`;
   
   try {
     const res = await fetch(url, {
@@ -35,7 +35,7 @@ async function request(party, endpoint, body) {
       throw new Error(data.errors ? data.errors.join(', ') : `HTTP error ${res.status}`);
     }
     
-    return data.result;
+    return data.result !== undefined ? data.result : (endpoint === '/v1/query' ? [] : {});
   } catch (err) {
     console.error(`Ledger API request failed [${endpoint}] for party ${party}:`, err.message);
     throw err;
@@ -44,7 +44,7 @@ async function request(party, endpoint, body) {
 
 export async function createContract(party, shortTemplateId, payload) {
   const templateId = getFullTemplateId(shortTemplateId);
-  return await request(party, '/v2/create', {
+  return await request(party, '/v1/create', {
     templateId,
     payload
   });
@@ -52,7 +52,7 @@ export async function createContract(party, shortTemplateId, payload) {
 
 export async function exerciseChoice(party, shortTemplateId, contractId, choice, argument = {}) {
   const templateId = getFullTemplateId(shortTemplateId);
-  return await request(party, '/v2/exercise', {
+  return await request(party, '/v1/exercise', {
     templateId,
     contractId,
     choice,
@@ -62,7 +62,7 @@ export async function exerciseChoice(party, shortTemplateId, contractId, choice,
 
 export async function queryContracts(party, shortTemplateId) {
   const templateId = getFullTemplateId(shortTemplateId);
-  return await request(party, '/v2/query', {
+  return await request(party, '/v1/query', {
     templateIds: [templateId]
   });
 }

@@ -12,6 +12,7 @@
     "ethers": "^6.17.0",
     "framer-motion": "^12.42.0",
     "lucide-react": "^0.379.0",
+    "playwright": "^1.61.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.18.0",
